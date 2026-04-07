@@ -40,6 +40,17 @@ html, body, [data-testid="stAppViewContainer"],
     color: #c9d1d9 !important;
     font-family: 'Segoe UI', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
 }
+/* 상단 Streamlit 툴바(Deploy·햄버거) 숨김 → 잘림 방지 */
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],
+#MainMenu, footer, header { display: none !important; visibility: hidden !important; }
+/* 툴바가 사라지면 block-container 상단 여백 최소화 */
+.block-container {
+    padding-top: 0.4rem !important;
+    padding-bottom: 0.5rem !important;
+}
+div[data-testid="stVerticalBlock"] { gap: 0.4rem !important; }
 
 /* ═══ HIDE SIDEBAR TOGGLE ════════════════════════════════ */
 [data-testid="collapsedControl"] { display: none !important; }
@@ -49,20 +60,20 @@ section[data-testid="stSidebar"]  { display: none !important; }
 .app-header {
     background: linear-gradient(90deg, #0d1117 0%, #161b22 100%);
     border-bottom: 1px solid #21262d;
-    padding: 0.9rem 1.4rem 0.7rem;
+    padding: 0.45rem 1.2rem 0.4rem;
     display: flex;
     align-items: center;
-    gap: 0.8rem;
-    margin-bottom: 0.2rem;
+    gap: 0.7rem;
+    margin-bottom: 0.1rem;
 }
 .app-header h1 {
-    font-size: 1.25rem;
+    font-size: 1.05rem;
     font-weight: 700;
     color: #58a6ff !important;
     margin: 0;
 }
 .app-header .sub {
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     color: #8b949e;
     margin: 0;
 }
@@ -194,7 +205,7 @@ div.stButton > button[kind="primary"]:hover {
     display: flex;
     flex-direction: column;
     gap: 0.65rem;
-    max-height: 55vh;
+    max-height: 65vh;
     overflow-y: auto;
     padding: 0.4rem 0.1rem 0.6rem;
     margin-bottom: 0.8rem;
@@ -246,11 +257,11 @@ div.stButton > button[kind="primary"]:hover {
 div[data-testid="metric-container"] {
     background: #161b22;
     border: 1px solid #21262d;
-    border-radius: 8px;
-    padding: 0.5rem;
+    border-radius: 6px;
+    padding: 0.25rem 0.5rem;
 }
-div[data-testid="stMetricValue"] { color: #58a6ff !important; font-size: 1rem !important; }
-div[data-testid="stMetricLabel"] { color: #8b949e !important; font-size: 0.75rem !important; }
+div[data-testid="stMetricValue"] { color: #58a6ff !important; font-size: 0.85rem !important; }
+div[data-testid="stMetricLabel"] { color: #8b949e !important; font-size: 0.68rem !important; }
 
 /* ═══ ALERTS ════════════════════════════════════════════ */
 div[data-testid="stAlert"] {
@@ -283,6 +294,26 @@ div[data-testid="stAlert"] {
 div[data-testid="stCheckbox"] label,
 div[data-testid="stCheckbox"] span { color: #c9d1d9 !important; }
 </style>
+<script>
+// 채팅창 자동 스크롤 — DOM 변화 감지 시 .chat-wrap 하단으로 스크롤
+(function() {
+    function scrollChat() {
+        var wrap = document.querySelector('.chat-wrap');
+        if (wrap) { wrap.scrollTop = wrap.scrollHeight; }
+    }
+    var observer = new MutationObserver(scrollChat);
+    function attachObserver() {
+        var wrap = document.querySelector('.chat-wrap');
+        if (wrap) {
+            observer.observe(wrap, { childList: true, subtree: true, characterData: true });
+            scrollChat();
+        } else {
+            setTimeout(attachObserver, 300);
+        }
+    }
+    attachObserver();
+})();
+</script>
 """, unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────────────
@@ -306,22 +337,23 @@ def _get_client() -> "genai.Client":
         _gemini_client = genai.Client(api_key=_api_key)
     return _gemini_client
 
-SYSTEM_PROMPT = """You are an expert SAP ERP consultant specializing in FI (Financial Accounting)
-and TR (Treasury & Risk Management) modules, supporting an ITO engineer in an air-gapped environment.
+SYSTEM_PROMPT = """You are an expert SAP FI/TR consultant supporting an ITO engineer.
 
-## Reasoning Priority
-1. **User's Work Notes (knowledge-base/)** — ALWAYS reference first. Treat as ground truth for
-   company-specific configurations. Quote relevant sections directly when found.
-2. **SAP Standard Knowledge** — Supplement ONLY when notes are insufficient.
-   Label clearly with [SAP Standard].
-3. **Company-specific / Subsidiary logic** — If uncertain, explicitly state:
-   "이 부분은 계열사 고유 설정일 수 있습니다. 내부 문서나 담당자에게 확인하세요."
+## 답변 원칙 (엄수)
+- **분량**: 핵심만. 5줄 이내로 해결 가능하면 5줄로. 복잡한 경우 최대 15줄.
+- **형식**: 한국어 답변. T-Code·테이블명·필드명은 영문 그대로.
+- **줄바꿈 최소화**: 단계가 3개 이하면 번호 목록 대신 "① → ② → ③" 인라인으로 표현.
+  불필요한 빈 줄 삽입 금지. 섹션 헤더(##, ###) 사용 금지. 답변 전후 빈 줄 없이 바로 시작.
+- **마크다운 자제**: 볼드(**) 최소화. 코드블록은 T-Code·필드명 등 꼭 필요한 경우만.
 
-## Rules
-- NEVER fabricate T-Codes, table names, or BAPI signatures.
-- NEVER infer real data from masked tokens like [MASKED], [BUKRS], [AMT], [CODE4].
-- Respond in Korean unless asked otherwise; keep technical terms in English.
-- Be concise and actionable. Use numbered steps and inline code for T-Codes.
+## 참조 우선순위
+1. knowledge-base/ 업무 노트 — 발견 시 해당 내용 직접 인용
+2. SAP 표준 지식 — 노트 부족 시 보완 ([SAP Standard] 표시)
+3. 계열사 특화 로직 불확실 → "내부 담당자 확인 필요" 명시
+
+## 금지사항
+- T-Code·테이블명·BAPI 서명 임의 생성 금지
+- [MASKED], [BUKRS], [AMT] 등 마스킹 토큰으로 실제 값 추론 금지
 """.strip()
 
 # ──────────────────────────────────────────────────────────────
@@ -387,8 +419,19 @@ def kb_save(content: str, kind: str) -> Path:
     return fp
 
 
-def kb_load_all() -> dict[str, str]:
-    """knowledge-base/ 내 모든 .md / .txt 로드"""
+def _kb_mtime_key() -> str:
+    """knowledge-base/ 내 파일들의 최신 mtime을 문자열로 반환 → 캐시 무효화 키"""
+    mtimes = [
+        fp.stat().st_mtime
+        for ext in ("*.md", "*.txt")
+        for fp in KB_DIR.glob(ext)
+    ]
+    return str(max(mtimes, default=0))
+
+
+@st.cache_data(show_spinner=False)
+def kb_load_all_cached(mtime_key: str) -> dict[str, str]:  # noqa: ARG001
+    """파일 변경 시에만 재로드 — mtime_key가 같으면 캐시 히트"""
     docs: dict[str, str] = {}
     for ext in ("*.md", "*.txt"):
         for fp in sorted(KB_DIR.glob(ext)):
@@ -397,6 +440,11 @@ def kb_load_all() -> dict[str, str]:
             except Exception:
                 pass
     return docs
+
+
+def kb_load_all() -> dict[str, str]:
+    """캐시 래퍼 — 외부에서는 이 함수만 호출"""
+    return kb_load_all_cached(_kb_mtime_key())
 
 
 def kb_search(query: str, docs: dict[str, str], top_k: int = 4) -> list[dict]:
@@ -444,71 +492,92 @@ def kb_build_context(hits: list[dict]) -> str:
 # 6. Claude API Call
 # ──────────────────────────────────────────────────────────────
 
-def call_gemini(messages: list[dict], context_block: str) -> str:
-    """Google Gemini 호출 (google-genai 신규 SDK)
-    - 429 할당량 초과 시 폴백 모델로 자동 전환
-    - system_instruction은 GenerateContentConfig에 주입
-    """
-    _api_key = os.getenv("GOOGLE_API_KEY", "")
-    if not _api_key:
-        return (
-            "⚠️ **GOOGLE_API_KEY 환경변수가 설정되지 않았습니다.**\n\n"
-            "```powershell\n$env:GOOGLE_API_KEY = 'AIza...'\nstreamlit run app.py\n```"
-        )
-
-    client = _get_client()
+def _build_gemini_params(messages: list[dict], context_block: str) -> tuple:
+    """공통 파라미터 구성 — (contents, config, full_system)"""
     full_system = SYSTEM_PROMPT + (f"\n\n{context_block}" if context_block else "")
-
-    # 대화 이력 → Contents 리스트 변환
-    contents = []
-    for m in messages:
-        role = "user" if m["role"] == "user" else "model"
-        contents.append(
-            genai_types.Content(
-                role=role,
-                parts=[genai_types.Part(text=m["content"])],
-            )
+    contents = [
+        genai_types.Content(
+            role="user" if m["role"] == "user" else "model",
+            parts=[genai_types.Part(text=m["content"])],
         )
-
+        for m in messages
+    ]
     config = genai_types.GenerateContentConfig(
         system_instruction=full_system,
-        temperature=0.3,
-        max_output_tokens=2048,
+        temperature=0.2,          # 낮을수록 일관된 답변
+        max_output_tokens=1024,   # 간결 답변 유도
     )
+    return contents, config
 
-    # 모델 순서대로 시도: 기본 → 폴백
+
+def stream_gemini(messages: list[dict], context_block: str):
+    """스트리밍 제너레이터 — st.write_stream()에 직접 전달
+    - 429(할당량 초과): 폴백 모델 전환
+    - 503(서버 과부하): 최대 3회 지수 백오프 재시도 (1s → 2s → 4s)
+    """
+    import time as _time
+
+    _api_key = os.getenv("GOOGLE_API_KEY", "")
+    if not _api_key:
+        yield (
+            "⚠️ **GOOGLE_API_KEY 환경변수가 설정되지 않았습니다.**\n\n"
+            "프로젝트 루트의 `.env` 파일에 `GOOGLE_API_KEY=AIza...` 를 추가하세요."
+        )
+        return
+
+    client = _get_client()
+    contents, config = _build_gemini_params(messages, context_block)
+
     for model_name in (GEMINI_MODEL, GEMINI_FALLBACK):
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=config,
-            )
-            return response.text
-        except Exception as e:
-            err_str = str(e)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                # 재시도 대기시간 파싱
-                import re as _re
-                wait_match = _re.search(r"retry.*?(\d+)s", err_str, _re.IGNORECASE)
-                wait_sec = wait_match.group(1) if wait_match else "잠시"
-                if model_name == GEMINI_FALLBACK:
-                    # 모든 폴백 소진
-                    return (
-                        f"⚠️ **API 할당량 초과 (429)**\n\n"
-                        f"모든 모델(`{GEMINI_MODEL}`, `{GEMINI_FALLBACK}`)의 무료 티어 한도가 소진되었습니다.\n\n"
-                        f"**해결 방법:**\n"
-                        f"1. **{wait_sec}초 후 다시 시도**하세요.\n"
-                        f"2. [Google AI Studio](https://aistudio.google.com/apikey)에서 **결제 계정 연결** (유료 플랜 전환)\n"
-                        f"3. 또는 내일(일일 한도 리셋) 재시도\n\n"
-                        f"> 💡 무료 플랜 한도: gemini-2.0-flash 기준 분당 15회, 일일 1,500회"
-                    )
-                # 다음 폴백 모델로 전환
-                continue
-            else:
-                return f"❌ API 오류: {e}"
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                for chunk in client.models.generate_content_stream(
+                    model=model_name,
+                    contents=contents,
+                    config=config,
+                ):
+                    if chunk.text:
+                        yield chunk.text
+                return  # 정상 완료 → 전체 탈출
 
-    return "❌ 알 수 없는 오류가 발생했습니다."
+            except Exception as e:
+                err_str = str(e)
+
+                # ── 429 할당량 초과 → 폴백 모델로 전환 ──────────
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    if model_name == GEMINI_FALLBACK:
+                        wait_match = re.search(r"(\d+)s", err_str)
+                        wait_sec = wait_match.group(1) if wait_match else "잠시"
+                        yield (
+                            f"\n\n⚠️ **API 할당량 초과 (429)**  \n"
+                            f"모든 모델의 무료 티어 한도가 소진됐습니다.  \n"
+                            f"**{wait_sec}초 후 재시도**하거나 Google AI Studio에서 결제 계정을 연결하세요."
+                        )
+                        return
+                    break  # 다음 모델(FALLBACK)로 전환
+
+                # ── 503 서버 과부하 → 지수 백오프 재시도 ─────────
+                elif "503" in err_str or "UNAVAILABLE" in err_str:
+                    if attempt < max_retries - 1:
+                        wait = 2 ** attempt  # 1s, 2s, 4s
+                        _time.sleep(wait)
+                        continue  # 같은 모델로 재시도
+                    else:
+                        # 재시도 소진 → 폴백 모델 시도
+                        if model_name == GEMINI_FALLBACK:
+                            yield (
+                                "\n\n⚠️ **서버 과부하 (503)**  \n"
+                                "Gemini API 서버에 일시적으로 과부하가 발생했습니다.  \n"
+                                "잠시 후 다시 질문해 주세요."
+                            )
+                            return
+                        break  # 다음 모델로 전환
+
+                # ── 기타 오류 → 즉시 출력 ─────────────────────────
+                else:
+                    yield f"❌ API 오류: {e}"
+                    return
 
 
 # ──────────────────────────────────────────────────────────────
@@ -535,7 +604,7 @@ if st.session_state.get("clear_note"):
 # ──────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="app-header">
-    <span style="font-size:1.55rem;line-height:1">🏦</span>
+    <span style="font-size:1.3rem;line-height:1">🏦</span>
     <div>
         <h1>SAP FI/TR Intelligent Operations Assistant</h1>
         <p class="sub">ITO Engineer Support Tool &nbsp;·&nbsp; Local-First &nbsp;·&nbsp; Air-Gap Ready</p>
@@ -545,25 +614,25 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────────────
-# 9. Security Oath  (전체 페이지 게이트)
+# 9. Security Oath + 상태 지표 — 한 줄 인라인 배치
 # ──────────────────────────────────────────────────────────────
-st.session_state.oath = st.checkbox(
-    "🔒 **보안 서약 확인** — 고객사 기밀정보·내부 접속정보가 포함되지 않았음을 확인합니다.",
-    value=st.session_state.oath,
-    key="oath_chk",
-)
+kb_files_all = sorted(KB_DIR.glob("*.md")) + sorted(KB_DIR.glob("*.txt"))
+
+oath_col, m1, m2, m3, m4 = st.columns([4, 1, 1, 1, 1], gap="small")
+with oath_col:
+    st.session_state.oath = st.checkbox(
+        "🔒 **보안 서약** — 고객사 기밀정보·내부 접속정보 미포함을 확인합니다.",
+        value=st.session_state.oath,
+        key="oath_chk",
+    )
+m1.metric("📂 노트", len(kb_files_all))
+m2.metric("🤖 모델", GEMINI_MODEL.replace("gemini-", ""))
+m3.metric("🔑 Key", "✅" if os.getenv("GOOGLE_API_KEY") else "❌")
+m4.metric("💬 턴", len(st.session_state.chat) // 2)
 
 if not st.session_state.oath:
     st.warning("보안 서약을 확인해야 저장 및 채팅 기능이 활성화됩니다.", icon="🔒")
     st.stop()
-
-# ── 상태 지표 ─────────────────────────────────────────────────
-kb_files_all = sorted(KB_DIR.glob("*.md")) + sorted(KB_DIR.glob("*.txt"))
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("📂 저장된 노트", len(kb_files_all))
-c2.metric("🤖 모델", GEMINI_MODEL)
-c3.metric("🔑 API Key", "✅ 설정됨" if os.getenv("GOOGLE_API_KEY") else "❌ 미설정")
-c4.metric("💬 대화 턴", len(st.session_state.chat) // 2)
 
 # ──────────────────────────────────────────────────────────────
 # 10. Tabs
@@ -826,9 +895,9 @@ with tab2:
             if m["role"] in ("user", "assistant")
         ]
 
-        # 4) Claude 호출
-        with st.spinner("🤖 분석 중…"):
-            reply = call_gemini(history, ctx)
+        # 4) 스트리밍 응답 — st.write_stream이 제너레이터를 실시간 렌더
+        with st.chat_message("assistant"):
+            reply = st.write_stream(stream_gemini(history, ctx))
 
         # 5) 응답 저장
         st.session_state.chat.append({
