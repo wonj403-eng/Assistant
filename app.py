@@ -11,6 +11,10 @@ import re
 import datetime
 from pathlib import Path
 
+# .env 파일에서 환경변수 자동 로드 (GOOGLE_API_KEY 등)
+from dotenv import load_dotenv
+load_dotenv()
+
 import streamlit as st
 
 # ──────────────────────────────────────────────────────────────
