@@ -1,0 +1,22 @@
+# ============================================================
+# SAP FI/TR Intelligent Operations Assistant v2.1
+# requirements.txt
+# ============================================================
+# 설치 명령어:
+#   pip install -r requirements.txt
+#
+# API Key 환경변수 설정 (앱 실행 전):
+#   $env:GOOGLE_API_KEY = "AIza..."   (PowerShell)
+#   export GOOGLE_API_KEY="AIza..."   (bash)
+# ============================================================
+
+# ── Core UI Framework ────────────────────────────────────────
+streamlit>=1.35.0
+
+# ── Google Gemini SDK (신규 SDK — google-generativeai는 deprecated) ─
+# Gemini 1.5 Flash 고정 모델 사용
+google-genai>=0.8.0
+# google-generativeai  ← deprecated, 제거됨
+
+# ── Async Runtime ────────────────────────────────────────────
+anyio>=4.3.0

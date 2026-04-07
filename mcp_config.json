@@ -1,0 +1,91 @@
+{
+    "_comment": "SAP FI/TR Intelligent Operations Assistant — MCP 서버 설정",
+    "_version": "1.0.0",
+    "_description": "Model Context Protocol 서버 설정 파일. knowledge-base/ 폴더를 AI가 실시간으로 검색할 수 있도록 연결합니다.",
+    "mcpServers": {
+        "sap-knowledge-base": {
+            "command": "python",
+            "args": [
+                "mcp_server.py",
+                "--kb-path",
+                "./knowledge-base"
+            ],
+            "env": {
+                "KB_PATH": "./knowledge-base",
+                "PYTHONIOENCODING": "utf-8"
+            },
+            "description": "SAP FI/TR 업무 노트 로컬 지식베이스 MCP 서버",
+            "version": "1.0.0",
+            "tools": [
+                {
+                    "name": "search_knowledge_base",
+                    "description": "키워드로 업무 노트 검색",
+                    "enabled": true
+                },
+                {
+                    "name": "list_documents",
+                    "description": "전체 문서 목록 조회",
+                    "enabled": true
+                },
+                {
+                    "name": "read_document",
+                    "description": "특정 문서 전문 읽기",
+                    "enabled": true
+                },
+                {
+                    "name": "write_document",
+                    "description": "새 업무 노트 저장",
+                    "enabled": true
+                }
+            ]
+        }
+    },
+    "knowledgeBase": {
+        "path": "./knowledge-base",
+        "supportedExtensions": [
+            ".md",
+            ".txt"
+        ],
+        "encoding": "utf-8",
+        "maxFileSizeKB": 1024,
+        "autoReload": true
+    },
+    "security": {
+        "allowedPaths": [
+            "./knowledge-base"
+        ],
+        "blockPatterns": [
+            "*.env",
+            "*.key",
+            "*.pem",
+            "credentials*",
+            "secret*",
+            "password*"
+        ],
+        "requireSecurityConfirmation": true,
+        "note": "고객사 기밀정보 포함 파일은 knowledge-base 폴더에 절대 저장하지 마세요."
+    },
+    "llm": {
+        "defaultModel": "gpt-4o",
+        "localOllamaUrl": "http://localhost:11434/v1",
+        "lmStudioUrl": "http://localhost:1234/v1",
+        "recommendedLocalModels": [
+            "llama3.1:8b",
+            "qwen2.5:14b",
+            "gemma3:12b",
+            "mistral:7b"
+        ],
+        "systemPromptPriority": [
+            "1순위: knowledge-base 업무 노트 (실제 운영 경험 기반)",
+            "2순위: SAP 표준 문서 지식 (레이블 명시)",
+            "3순위: 계열사 특화 사항 불확실 시 → 확인 권고"
+        ]
+    },
+    "ui": {
+        "theme": "dark",
+        "title": "SAP FI/TR Intelligent Operations Assistant",
+        "language": "ko",
+        "enableAbapMasking": true,
+        "enableMcpExplorer": true
+    }
+}

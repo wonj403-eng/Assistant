@@ -1,0 +1,39 @@
+# ── Python ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual Environments ─────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Environment Variables (보안: API 키 절대 커밋 금지) ───────
+.env
+.env.*
+*.env
+
+# ── Streamlit ────────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── IDE / OS ─────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Knowledge Base (개인 업무 노트는 원격 저장 안 함) ──────────
+# 아래 주석 해제 시 knowledge-base/ 전체를 git 추적에서 제외
+# knowledge-base/
+
+# ── Logs ─────────────────────────────────────────────────────
+*.log
