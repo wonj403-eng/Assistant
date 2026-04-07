@@ -362,10 +362,24 @@ def mask_abap(source: str) -> tuple[str, int]:
 # ──────────────────────────────────────────────────────────────
 
 def kb_save(content: str, kind: str) -> Path:
-    """YYYYMMDD_HHMMSS_kind.md 형식으로 저장"""
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    fp = KB_DIR / f"{ts}_{kind}.md"
-    fp.write_text(content, encoding="utf-8")
+    """저장 규칙:
+    - abap_masked : 매번 YYYYMMDD_HHMMSS_abap_masked.md 신규 생성 (소스별 구분 필요)
+    - work_note   : 오늘 날짜 YYYYMMDD_daily_notes.md 에 append (일별 통합)
+    """
+    today = datetime.datetime.now().strftime("%Y%m%d")
+    if kind == "work_note":
+        fp = KB_DIR / f"{today}_daily_notes.md"
+        # 파일이 없으면 헤더 포함 신규 생성, 있으면 구분선과 함께 추가
+        if fp.exists():
+            with fp.open("a", encoding="utf-8") as f:
+                f.write(f"\n\n---\n\n{content}")
+        else:
+            with fp.open("w", encoding="utf-8") as f:
+                f.write(f"# 📝 Daily Notes — {today[:4]}.{today[4:6]}.{today[6:]}\n\n{content}")
+    else:
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        fp = KB_DIR / f"{ts}_{kind}.md"
+        fp.write_text(content, encoding="utf-8")
     return fp
 
 
@@ -670,14 +684,16 @@ with tab1:
         if st.button("📌 노트 저장", use_container_width=True,
                      type="primary", key="btn_nsave"):
             if note_body.strip():
-                title_md = f"# {note_title.strip()}\n\n" if note_title.strip() else ""
-                body = (
-                    f"{title_md}"
-                    f"> 저장: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                ts_str = datetime.datetime.now().strftime("%H:%M:%S")
+                # 제목이 있으면 ## 소제목, 없으면 시간만 표시
+                title_md = f"## {note_title.strip()}" if note_title.strip() else f"## 메모"
+                entry = (
+                    f"{title_md}  "           # 뒤 공백 2개 = 마크다운 줄바꿈
+                    f"`{ts_str}`\n\n"
                     f"{note_body.strip()}"
                 )
-                fp = kb_save(body, "work_note")
-                st.toast(f"✅ 저장 완료 → {fp.name}", icon="📌")
+                fp = kb_save(entry, "work_note")
+                st.toast(f"✅ {fp.name} 에 저장됨", icon="📌")
                 # 위젯 key 바인딩된 값은 같은 사이클에서 직접 수정 불가
                 # → 플래그 세우고 rerun 후 다음 사이클 상단에서 초기화
                 st.session_state["clear_note"] = True
@@ -696,12 +712,12 @@ with tab1:
         )
         if current_files:
             for fp in current_files[:15]:
-                kind = "abap_masked" if "abap_masked" in fp.name else "work_note"
-                badge = (
-                    '<span class="chip green">ABAP</span>'
-                    if kind == "abap_masked"
-                    else '<span class="chip blue">NOTE</span>'
-                )
+                if "abap_masked" in fp.name:
+                    badge = '<span class="chip green">ABAP</span>'
+                elif "daily_notes" in fp.name:
+                    badge = '<span class="chip blue">📅 일별노트</span>'
+                else:
+                    badge = '<span class="chip blue">NOTE</span>'
                 size_kb = fp.stat().st_size / 1024
                 st.markdown(
                     f'{badge} <code style="font-size:.78rem;color:#8b949e">{fp.name}</code> '
