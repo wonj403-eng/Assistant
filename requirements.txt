@@ -23,3 +23,5 @@ google-genai>=0.8.0
 
 # ── Async Runtime ────────────────────────────────────────────
 anyio>=4.3.0
+
+# API KEY : AIzaSyBYMowPmkKT2rcPxnYpTKZXhxpPh6n7I5Q
