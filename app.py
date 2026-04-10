@@ -326,8 +326,8 @@ KB_DIR.mkdir(exist_ok=True)
 # Gemini API Setup — google-genai (신규 SDK, generativeai deprecated)
 from google import genai
 from google.genai import types as genai_types
-GEMINI_MODEL = "gemini-2.0-flash-lite"  # 무료 티어 할당량이 가장 넉넉한 모델
-GEMINI_FALLBACK = "gemini-flash-latest"  # lite도 소진 시 최종 폴백
+GEMINI_MODEL    = "gemini-2.5-flash"       # 이 API 키에서 가장 빠르고 성능 좋은 모델
+GEMINI_FALLBACK = "gemini-2.0-flash-lite"  # 소진 시 폴백
 _gemini_client: "genai.Client | None" = None
 
 def _get_client() -> "genai.Client":
@@ -339,21 +339,35 @@ def _get_client() -> "genai.Client":
 
 SYSTEM_PROMPT = """You are an expert SAP FI/TR consultant supporting an ITO engineer.
 
+## Knowledge-Base 파일 구조 인식
+knowledge-base의 파일명은 다음 규칙을 따른다:
+- (ABAP)_소스명_날짜.md  → ABAP 소스코드, SQL 쿼리, 프로그램 관련 노트
+- (FI)_제목_날짜.md      → FI 모듈 업무 노트 (전표, 결산, AP/AR/GL 등)
+- (TR)_제목_날짜.md      → TR 모듈 업무 노트 (유동성, 현금관리, 은행 대사 등)
+- (MM)/(SD)/(HR) 등      → 각 모듈별 업무 노트
+
+이 프롬프트 뒤에 "아래는 knowledge-base에서 검색된 실제 업무 노트" 섹션이 붙어 있으면,
+그 내용은 이미 네 컨텍스트 안에 로드된 것이다.
+- 소스코드·쿼리 관련 질문 → (ABAP) 파일 내용을 우선 확인하라.
+- FI 업무 질문 → (FI) 파일, TR 업무 질문 → (TR) 파일을 우선 확인하라.
+- 사용자가 "저장한 파일 읽어와", "노트 확인해줘", "쿼리 보여줘" 라고 하면
+  컨텍스트에 있는 KB 내용을 그대로 보여주거나 요약해서 답하라.
+- "파일 시스템에 접근할 수 없습니다" 류의 답변은 절대 하지 마라. KB는 이미 컨텍스트에 있다.
+- 노트를 참고했다면 출처 파일명을 자연스럽게 언급하라.
+  예) "저장된 노트((FI)_기표관련이슈_20260409.md) 기준으로는 ..."
+- KB에도 없고 SAP 표준으로도 불확실하면 "내부 담당자 확인 필요"라고 명시하라.
+
 ## 답변 원칙 (엄수)
 - **분량**: 핵심만. 5줄 이내로 해결 가능하면 5줄로. 복잡한 경우 최대 15줄.
 - **형식**: 한국어 답변. T-Code·테이블명·필드명은 영문 그대로.
-- **줄바꿈 최소화**: 단계가 3개 이하면 번호 목록 대신 "① → ② → ③" 인라인으로 표현.
-  불필요한 빈 줄 삽입 금지. 섹션 헤더(##, ###) 사용 금지. 답변 전후 빈 줄 없이 바로 시작.
-- **마크다운 자제**: 볼드(**) 최소화. 코드블록은 T-Code·필드명 등 꼭 필요한 경우만.
-
-## 참조 우선순위
-1. knowledge-base/ 업무 노트 — 발견 시 해당 내용 직접 인용
-2. SAP 표준 지식 — 노트 부족 시 보완 ([SAP Standard] 표시)
-3. 계열사 특화 로직 불확실 → "내부 담당자 확인 필요" 명시
+- **줄바꿈**: 문장이 끝날 때마다 줄바꿈. 단계가 3개 이하면 "① → ② → ③" 인라인. 불필요한 빈 줄(연속 2줄 이상) 금지.
+- **마크다운 자제**: 섹션 헤더(##, ###) 사용 금지. 볼드(**) 최소화. 코드블록은 꼭 필요한 경우만.
+- **자기소개 금지**: 자신을 소개하거나 역할을 설명하는 답변 금지. 질문에 바로 답할 것.
 
 ## 금지사항
 - T-Code·테이블명·BAPI 서명 임의 생성 금지
 - [MASKED], [BUKRS], [AMT] 등 마스킹 토큰으로 실제 값 추론 금지
+- "파일 시스템에 접근할 수 없습니다" 류의 답변 금지
 """.strip()
 
 # ──────────────────────────────────────────────────────────────
@@ -371,8 +385,9 @@ _MASK_RULES: list[tuple[str, object]] = [
     (r"\b\d{5,}(?:\.\d+)?\b",                                 "[AMT]"),
     # 4자리 연속 숫자 (계좌/코드)
     (r"(?<!\w)\d{4}(?!\w)",                                    "[CODE4]"),
-    # 회사코드 패턴 (단독 영문숫자 2-4자)
-    (r"(?<!\w)([A-Z]{2,4}\d{0,2})(?!\w)",                     "[BUKRS]"),
+    # 회사코드 패턴 — 영문 1~2자 + 숫자 2~4자 단독 토큰 (KR01, CC10, A100 등)
+    # 단순 대문자 영어 단어(NAME, AND, MAX 등)는 제외
+    (r"(?<!\w)[A-Z]{1,2}\d{2,4}(?!\w)",                       "[BUKRS]"),
     # 변수명 lv_/lt_/ls_/gv_ 계열
     (r"\b(lv|lt|ls|lw|wa|gv|gw|gt|gs)_[a-zA-Z0-9_]+\b",
      lambda m: f"{m.group(1)}_VAR"),
@@ -397,24 +412,49 @@ def mask_abap(source: str) -> tuple[str, int]:
 # 5. Knowledge Base I/O
 # ──────────────────────────────────────────────────────────────
 
-def kb_save(content: str, kind: str) -> Path:
+def _abap_source_name(source: str) -> str:
+    """ABAP 소스에서 프로그램/클래스/펑션 이름을 추출해 파일명용 슬러그 반환.
+    우선순위: PROGRAM / CLASS / FUNCTION / FORM / REPORT → 없으면 'abap_src'
+    """
+    patterns = [
+        r"^\s*(?:PROGRAM|REPORT)\s+([A-Za-z0-9_/]+)",
+        r"^\s*CLASS\s+([A-Za-z0-9_/]+)\s+DEFINITION",
+        r"^\s*FUNCTION\s+([A-Za-z0-9_/]+)",
+        r"^\s*FORM\s+([A-Za-z0-9_]+)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, source, re.IGNORECASE | re.MULTILINE)
+        if m:
+            name = m.group(1).strip().rstrip(".")
+            # 파일명에 못 쓰는 문자 제거, 소문자로, 최대 30자
+            name = re.sub(r"[^A-Za-z0-9_]", "_", name).lower()[:30].strip("_")
+            if name:
+                return name
+    return "abap_src"
+
+
+def kb_save(content: str, kind: str, source_name: str = "", module: str = "기타") -> Path:
     """저장 규칙:
-    - abap_masked : 매번 YYYYMMDD_HHMMSS_abap_masked.md 신규 생성 (소스별 구분 필요)
-    - work_note   : 오늘 날짜 YYYYMMDD_daily_notes.md 에 append (일별 통합)
+    - abap_masked : (ABAP)_<소스명>_YYYYMMDD.md
+    - work_note   : (MODULE)_<제목슬러그>_YYYYMMDD.md  (같은 날 같은 이름이면 _2, _3)
     """
     today = datetime.datetime.now().strftime("%Y%m%d")
     if kind == "work_note":
-        fp = KB_DIR / f"{today}_daily_notes.md"
-        # 파일이 없으면 헤더 포함 신규 생성, 있으면 구분선과 함께 추가
-        if fp.exists():
-            with fp.open("a", encoding="utf-8") as f:
-                f.write(f"\n\n---\n\n{content}")
-        else:
-            with fp.open("w", encoding="utf-8") as f:
-                f.write(f"# 📝 Daily Notes — {today[:4]}.{today[4:6]}.{today[6:]}\n\n{content}")
+        # 제목에서 파일명 슬러그 생성 (공백→언더바, 특수문자 제거, 최대 20자)
+        slug = re.sub(r"[^\w가-힣]", "_", source_name).strip("_")[:20] if source_name else "노트"
+        fp = KB_DIR / f"({module})_{slug}_{today}.md"
+        counter = 2
+        while fp.exists():
+            fp = KB_DIR / f"({module})_{slug}_{today}_{counter}.md"
+            counter += 1
+        fp.write_text(content, encoding="utf-8")
     else:
-        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        fp = KB_DIR / f"{ts}_{kind}.md"
+        slug = source_name if source_name else "abap_src"
+        fp = KB_DIR / f"(ABAP)_{slug}_{today}.md"
+        counter = 2
+        while fp.exists():
+            fp = KB_DIR / f"(ABAP)_{slug}_{today}_{counter}.md"
+            counter += 1
         fp.write_text(content, encoding="utf-8")
     return fp
 
@@ -447,31 +487,104 @@ def kb_load_all() -> dict[str, str]:
     return kb_load_all_cached(_kb_mtime_key())
 
 
-def kb_search(query: str, docs: dict[str, str], top_k: int = 4) -> list[dict]:
-    """키워드 기반 관련도 검색 → 상위 top_k 결과"""
-    tokens = set(re.findall(r"[가-힣a-zA-Z0-9_/]{2,}", query.lower()))
-    if not tokens:
+def kb_invalidate_cache() -> None:
+    """파일 저장 직후 캐시를 강제 무효화 — 다음 kb_load_all() 호출 시 즉시 재로드"""
+    kb_load_all_cached.clear()
+
+
+def kb_search(query: str, docs: dict[str, str], top_k: int = 3) -> list[dict]:
+    """키워드 기반 관련도 검색 + 파일명 prefix 우선순위.
+
+    우선순위 규칙:
+    - 소스/쿼리 관련 질문 → (ABAP) 파일 boost
+    - FI 관련 질문 → (FI) 파일 boost
+    - TR 관련 질문 → (TR) 파일 boost
+    - 매칭 없어도 최신 파일(mtime) 1개는 항상 포함
+    """
+    if not docs:
         return []
+
+    tokens = set(re.findall(r"[가-힣a-zA-Z0-9_/]{2,}", query.lower()))
+
+    # 질문 유형 판별
+    ABAP_HINTS = {"abap", "소스", "쿼리", "select", "function", "report",
+                  "프로그램", "코드", "펑션", "bapi", "fm", "인터페이스"}
+    FI_HINTS   = {"fi", "전표", "기표", "결산", "ap", "ar", "gl", "fbl", "fb",
+                  "f110", "miro", "외화", "평가", "감가상각", "afab", "코드"}
+    TR_HINTS   = {"tr", "유동성", "ff7b", "현금", "은행", "대사", "feba",
+                  "planning", "treasury", "hedge"}
+
+    is_abap = bool(tokens & ABAP_HINTS)
+    is_fi   = bool(tokens & FI_HINTS)
+    is_tr   = bool(tokens & TR_HINTS)
+
+    def prefix_boost(name: str) -> float:
+        """파일명 prefix에 따른 우선순위 가중치"""
+        if is_abap and name.startswith("(ABAP)"):
+            return 2.0
+        if is_fi and name.startswith("(FI)"):
+            return 1.5
+        if is_tr and name.startswith("(TR)"):
+            return 1.5
+        return 1.0
+
     scored: list[tuple[float, str, str]] = []
+    unmatched: list[tuple[str, str]] = []
+
     for name, text in docs.items():
-        tl = text.lower()
-        hits = sum(1 for t in tokens if t in tl)
-        if hits:
-            scored.append((hits / len(tokens), name, text))
+        if tokens:
+            tl = text.lower()
+            hits = sum(1 for t in tokens if t in tl)
+            if hits:
+                raw_score = hits / len(tokens)
+                boosted = raw_score * prefix_boost(name)
+                scored.append((boosted, name, text))
+            else:
+                unmatched.append((name, text))
+        else:
+            unmatched.append((name, text))
+
     scored.sort(reverse=True)
 
+    # 결과 풀 구성
+    results_pool = list(scored[:top_k])
+    matched_names = {name for _, name, _ in results_pool}
+
+    # mtime 내림차순 정렬 (최신 파일 우선 보충)
+    unmatched_by_mtime = sorted(
+        unmatched,
+        key=lambda x: (KB_DIR / x[0]).stat().st_mtime if (KB_DIR / x[0]).exists() else 0,
+        reverse=True,
+    )
+
+    # 가장 최신 파일은 무조건 포함
+    if unmatched_by_mtime:
+        newest_name, newest_text = unmatched_by_mtime[0]
+        if newest_name not in matched_names:
+            results_pool.append((0.0, newest_name, newest_text))
+            matched_names.add(newest_name)
+
+    # 나머지는 top_k까지 보충
+    for name, text in unmatched_by_mtime[1:]:
+        if len(results_pool) >= top_k:
+            break
+        if name not in matched_names:
+            results_pool.append((0.0, name, text))
+            matched_names.add(name)
+
     results = []
-    for score, name, text in scored[:top_k]:
+    for score, name, text in results_pool[:top_k]:
         tl = text.lower()
         best_pos, best_n = 0, 0
-        for i in range(0, max(1, len(text) - 300), 60):
-            n = sum(1 for t in tokens if t in tl[i: i + 300])
-            if n > best_n:
-                best_n, best_pos = n, i
+        if tokens:
+            for i in range(0, max(1, len(text) - 300), 60):
+                n = sum(1 for t in tokens if t in tl[i: i + 300])
+                if n > best_n:
+                    best_n, best_pos = n, i
         results.append({
             "name": name,
             "score": round(score, 3),
-            "excerpt": text[best_pos: best_pos + 300].strip(),
+            "excerpt": text[best_pos: best_pos + 600].strip(),
         })
     return results
 
@@ -479,10 +592,13 @@ def kb_search(query: str, docs: dict[str, str], top_k: int = 4) -> list[dict]:
 def kb_build_context(hits: list[dict]) -> str:
     if not hits:
         return ""
-    parts = ["## 참조된 업무 노트 (knowledge-base)\n"]
+    parts = [
+        "## 아래는 knowledge-base에서 검색된 실제 업무 노트입니다.",
+        "질문과 관련이 있다면 참고하세요.\n",
+    ]
     for h in hits:
         parts.append(
-            f"### [{h['name']}]  score={h['score']}\n"
+            f"### 출처: [{h['name']}]  관련도={h['score']}\n"
             f"```\n{h['excerpt']}\n```\n"
         )
     return "\n".join(parts)
@@ -505,7 +621,7 @@ def _build_gemini_params(messages: list[dict], context_block: str) -> tuple:
     config = genai_types.GenerateContentConfig(
         system_instruction=full_system,
         temperature=0.2,          # 낮을수록 일관된 답변
-        max_output_tokens=1024,   # 간결 답변 유도
+        max_output_tokens=2048,   # 512는 한국어 기준 너무 짧아 답변 중간 잘림
     )
     return contents, config
 
@@ -597,6 +713,7 @@ for _k, _v in {
 if st.session_state.get("clear_note"):
     st.session_state["note_title"] = ""
     st.session_state["note_body"] = ""
+    st.session_state["note_module"] = "FI"
     st.session_state["clear_note"] = False
 
 # ──────────────────────────────────────────────────────────────
@@ -682,13 +799,15 @@ with tab1:
                          type="primary", key="btn_msave"):
                 if abap_src.strip():
                     masked, cnt = mask_abap(abap_src)
+                    src_name = _abap_source_name(abap_src)   # 소스명 추출
                     header = (
-                        f"# ABAP Masked Source\n"
+                        f"# (ABAP) {src_name}\n"
                         f"> 저장: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} "
                         f"/ 마스킹 {cnt}건\n\n"
                         f"```abap\n{masked}\n```\n"
                     )
-                    fp = kb_save(header, "abap_masked")
+                    fp = kb_save(header, "abap_masked", source_name=src_name)
+                    kb_invalidate_cache()                    # 저장 즉시 캐시 갱신
                     st.session_state.masked_preview = masked
                     st.session_state.mask_count = cnt
                     st.toast(f"✅ 저장 완료 → {fp.name}", icon="💾")
@@ -723,7 +842,7 @@ with tab1:
 | 호스트명 | `sapdev.corp.co.kr` | `[HOST]` |
 | 금액 (5자리↑) | `1000000` | `[AMT]` |
 | 4자리 코드 | `1234` | `[CODE4]` |
-| 회사코드 | `KR01`, `ABCD` | `[BUKRS]` |
+| 회사코드 | `KR01`, `CC10`, `A100` | `[BUKRS]` |
 | 변수명 | `lv_amount`, `lt_docs` | `lv_VAR`, `lt_VAR` |
 | 구조체→필드 | `ls_doc->bukrs` | `STRUCT->FIELD` |
 """)
@@ -733,19 +852,26 @@ with tab1:
         st.markdown('<div class="sec-label">📝 Work Notes — 업무 노트 저장</div>',
                     unsafe_allow_html=True)
 
+        note_module = st.selectbox(
+            "모듈",
+            options=["FI", "TR", "MM", "SD", "HR", "기타"],
+            index=0,
+            key="note_module",
+            help="파일명 앞에 (모듈명) 형식으로 붙습니다",
+        )
         note_title = st.text_input(
-            "노트 제목 (선택)",
-            placeholder="예: FF7B 유동성 조회 오류 대응 절차",
+            "노트 제목",
+            placeholder="예: 기표관련이슈  /  FF7B유동성오류  /  결산마감절차",
             key="note_title",
         )
         note_body = st.text_area(
             "노트 내용",
-            height=270,
+            height=230,
             placeholder=(
                 "자유 형식으로 업무 로직, 장애 대응 메모,\n"
                 "트랜잭션 절차 등을 기록하세요.\n\n"
                 "예시:\n"
-                "## FF7B 유동성 예측 오류\n"
+                "FF7B 유동성 예측 오류\n"
                 "증상: Planning Level 미조회\n"
                 "원인: TR20 매핑 누락\n"
                 "조치: TR20 → Bank Account → Level 재연결"
@@ -757,20 +883,24 @@ with tab1:
         if st.button("📌 노트 저장", use_container_width=True,
                      type="primary", key="btn_nsave"):
             if note_body.strip():
-                ts_str = datetime.datetime.now().strftime("%H:%M:%S")
-                # 제목이 있으면 ## 소제목, 없으면 시간만 표시
-                title_md = f"## {note_title.strip()}" if note_title.strip() else f"## 메모"
-                entry = (
-                    f"{title_md}  "           # 뒤 공백 2개 = 마크다운 줄바꿈
-                    f"`{ts_str}`\n\n"
-                    f"{note_body.strip()}"
-                )
-                fp = kb_save(entry, "work_note")
-                st.toast(f"✅ {fp.name} 에 저장됨", icon="📌")
-                # 위젯 key 바인딩된 값은 같은 사이클에서 직접 수정 불가
-                # → 플래그 세우고 rerun 후 다음 사이클 상단에서 초기화
-                st.session_state["clear_note"] = True
-                st.rerun()
+                if not note_title.strip():
+                    st.toast("노트 제목을 입력하세요 (파일명에 사용됩니다).", icon="⚠️")
+                else:
+                    ts_str = datetime.datetime.now().strftime("%H:%M:%S")
+                    today_label = datetime.datetime.now().strftime("%Y.%m.%d")
+                    entry = (
+                        f"# ({note_module}) {note_title.strip()}  `{ts_str}`\n\n"
+                        f"{note_body.strip()}"
+                    )
+                    fp = kb_save(
+                        entry, "work_note",
+                        source_name=note_title.strip(),
+                        module=note_module,
+                    )
+                    kb_invalidate_cache()
+                    st.toast(f"✅ {fp.name} 저장됨", icon="📌")
+                    st.session_state["clear_note"] = True
+                    st.rerun()
             else:
                 st.toast("노트 내용을 입력하세요.", icon="⚠️")
 
@@ -785,12 +915,21 @@ with tab1:
         )
         if current_files:
             for fp in current_files[:15]:
-                if "abap_masked" in fp.name:
+                name = fp.name
+                if name.startswith("(ABAP)"):
                     badge = '<span class="chip green">ABAP</span>'
-                elif "daily_notes" in fp.name:
-                    badge = '<span class="chip blue">📅 일별노트</span>'
+                elif name.startswith("(FI)"):
+                    badge = '<span class="chip blue">FI</span>'
+                elif name.startswith("(TR)"):
+                    badge = '<span class="chip blue">TR</span>'
+                elif name.startswith("(MM)"):
+                    badge = '<span class="chip blue">MM</span>'
+                elif name.startswith("(SD)"):
+                    badge = '<span class="chip blue">SD</span>'
+                elif name.startswith("(HR)"):
+                    badge = '<span class="chip blue">HR</span>'
                 else:
-                    badge = '<span class="chip blue">NOTE</span>'
+                    badge = '<span class="chip">NOTE</span>'
                 size_kb = fp.stat().st_size / 1024
                 st.markdown(
                     f'{badge} <code style="font-size:.78rem;color:#8b949e">{fp.name}</code> '
@@ -888,16 +1027,17 @@ with tab2:
         ctx = kb_build_context(hits)
         sources = [h["name"] for h in hits]
 
-        # 3) 이력 구성 (최근 20메시지 = 10턴)
+        # 3) 이력 구성 (최근 10메시지 = 5턴 — 컨텍스트 경량화)
         history: list[dict] = [
             {"role": m["role"], "content": m["content"]}
-            for m in st.session_state.chat[-20:]
+            for m in st.session_state.chat[-10:]
             if m["role"] in ("user", "assistant")
         ]
 
         # 4) 스트리밍 응답 — st.write_stream이 제너레이터를 실시간 렌더
         with st.chat_message("assistant"):
-            reply = st.write_stream(stream_gemini(history, ctx))
+            with st.spinner("답변 생성 중…"):
+                reply = st.write_stream(stream_gemini(history, ctx))
 
         # 5) 응답 저장
         st.session_state.chat.append({
